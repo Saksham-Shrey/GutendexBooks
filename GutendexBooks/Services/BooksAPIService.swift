@@ -95,6 +95,36 @@ actor BooksAPIService {
             throw APIError.networkError(error)
         }
     }
+    
+    func searchBooks(parameters: BookSearchParameters) async throws -> BooksResponse {
+        var components = URLComponents(string: baseURL)
+        components?.queryItems = parameters.toQueryItems()
+        
+        guard let url = components?.url else {
+            throw APIError.invalidURL
+        }
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                throw APIError.invalidResponse
+            }
+            
+            do {
+                let decoder = JSONDecoder()
+                let booksResponse = try decoder.decode(BooksResponse.self, from: data)
+                return booksResponse
+            } catch {
+                throw APIError.decodingError(error)
+            }
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.networkError(error)
+        }
+    }
 }
 
 // MARK: - Book Cache
@@ -188,5 +218,73 @@ actor BookCache {
         } catch {
             throw APIError.cachingError(error)
         }
+    }
+}
+
+// MARK: - Search Parameters
+struct BookSearchParameters {
+    var searchQuery: String?
+    var languages: [String]?
+    var authorYearStart: Int?
+    var authorYearEnd: Int?
+    var topic: String?
+    var mimeType: String?
+    var sort: BookSort?
+    var ids: [Int]?
+    var copyright: [Bool?]?
+    
+    enum BookSort: String {
+        case popular = "popular"
+        case ascending = "ascending"
+        case descending = "descending"
+    }
+    
+    func toQueryItems() -> [URLQueryItem] {
+        var queryItems = [URLQueryItem]()
+        
+        if let searchQuery = searchQuery, !searchQuery.isEmpty {
+            queryItems.append(URLQueryItem(name: "search", value: searchQuery))
+        }
+        
+        if let languages = languages, !languages.isEmpty {
+            queryItems.append(URLQueryItem(name: "languages", value: languages.joined(separator: ",")))
+        }
+        
+        if let authorYearStart = authorYearStart {
+            queryItems.append(URLQueryItem(name: "author_year_start", value: String(authorYearStart)))
+        }
+        
+        if let authorYearEnd = authorYearEnd {
+            queryItems.append(URLQueryItem(name: "author_year_end", value: String(authorYearEnd)))
+        }
+        
+        if let topic = topic, !topic.isEmpty {
+            queryItems.append(URLQueryItem(name: "topic", value: topic))
+        }
+        
+        if let mimeType = mimeType, !mimeType.isEmpty {
+            queryItems.append(URLQueryItem(name: "mime_type", value: mimeType))
+        }
+        
+        if let sort = sort {
+            queryItems.append(URLQueryItem(name: "sort", value: sort.rawValue))
+        }
+        
+        if let ids = ids, !ids.isEmpty {
+            queryItems.append(URLQueryItem(name: "ids", value: ids.map { String($0) }.joined(separator: ",")))
+        }
+        
+        if let copyright = copyright, !copyright.isEmpty {
+            let copyrightValues = copyright.map { value -> String in
+                if let value = value {
+                    return value ? "true" : "false"
+                } else {
+                    return "null"
+                }
+            }
+            queryItems.append(URLQueryItem(name: "copyright", value: copyrightValues.joined(separator: ",")))
+        }
+        
+        return queryItems
     }
 } 

@@ -290,7 +290,7 @@ struct BookDetailView: View {
             isDownloading = false
             
             switch result {
-            case .success(let fileURL):
+                case .success(_):
                 downloadStatus[format] = .downloaded
                 activeAlert = AlertItem(
                     title: "Download Complete",

@@ -10,6 +10,8 @@ class BooksViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var hasNextPage = false
     @Published var nextPageURL: String?
+    @Published var searchQuery = ""
+    @Published var isSearchActive = false
     
     // Book details state
     @Published var selectedBook: Book?
@@ -17,17 +19,66 @@ class BooksViewModel: ObservableObject {
     
     private var loadTask: Task<Void, Never>?
     private var isInitialLoad = true
+    private var currentSearchParameters: BookSearchParameters?
     
     deinit {
         loadTask?.cancel()
     }
     
+    // MARK: - Search Methods
+    
+    func searchBooks(query: String) async {
+        if query.isEmpty {
+            // If search query is empty, load the default books
+            isSearchActive = false
+            currentSearchParameters = nil
+            await loadBooks()
+            return
+        }
+        
+        cancelCurrentTasks()
+        isLoading = true
+        errorMessage = nil
+        isSearchActive = true
+        
+        let parameters = BookSearchParameters(searchQuery: query)
+        currentSearchParameters = parameters
+        
+        loadTask = Task {
+            do {
+                let response = try await apiService.searchBooks(parameters: parameters)
+                
+                if Task.isCancelled { return }
+                
+                // Update with search results
+                self.books = response.results
+                self.nextPageURL = response.next
+                self.hasNextPage = response.next != nil
+            } catch {
+                if !Task.isCancelled {
+                    self.errorMessage = handleError(error)
+                }
+            }
+            
+            self.isLoading = false
+        }
+        
+        await loadTask?.value
+    }
+    
+    func clearSearch() async {
+        searchQuery = ""
+        isSearchActive = false
+        currentSearchParameters = nil
+        await loadBooks()
+    }
+    
+    // MARK: - Book Loading Methods
+    
     func loadBooks() async {
         if isLoading { return }
         
-        // Cancel any existing load task
-        loadTask?.cancel()
-        
+        cancelCurrentTasks()
         isLoading = true
         errorMessage = nil
         
@@ -35,7 +86,7 @@ class BooksViewModel: ObservableObject {
         loadTask = Task {
             do {
                 // Use cache for first load, force refresh for manual pulls
-                let useCache = isInitialLoad
+                let useCache = isInitialLoad && !isSearchActive
                 let response = try await apiService.fetchBooks(useCache: useCache)
                 
                 // Guard against task cancellation
@@ -59,11 +110,19 @@ class BooksViewModel: ObservableObject {
     }
     
     func loadMoreBooks() async {
-        guard hasNextPage, let nextPage = nextPageURL, !isLoading else { return }
+        guard hasNextPage, !isLoading else { return }
         
-        // Cancel any existing load task
-        loadTask?.cancel()
-        
+        if let nextPage = nextPageURL {
+            await loadMoreBooksFromURL(nextPage)
+        } else if isSearchActive, let parameters = currentSearchParameters {
+            // If we're in a search and there's no next URL yet,
+            // we need to make a new search request
+            await searchMore(parameters: parameters)
+        }
+    }
+    
+    private func loadMoreBooksFromURL(_ nextPage: String) async {
+        cancelCurrentTasks()
         isLoading = true
         
         // Create a new task for loading more books
@@ -95,6 +154,41 @@ class BooksViewModel: ObservableObject {
         
         // Wait for task completion
         await loadTask?.value
+    }
+    
+    private func searchMore(parameters: BookSearchParameters) async {
+        cancelCurrentTasks()
+        isLoading = true
+        
+        loadTask = Task {
+            do {
+                try await Task.sleep(for: .milliseconds(300))
+                
+                if Task.isCancelled { return }
+                
+                let response = try await apiService.searchBooks(parameters: parameters)
+                
+                if Task.isCancelled { return }
+                
+                // Append new books to existing list
+                self.books.append(contentsOf: response.results)
+                self.nextPageURL = response.next
+                self.hasNextPage = response.next != nil
+            } catch {
+                if !Task.isCancelled {
+                    self.errorMessage = handleError(error)
+                }
+            }
+            
+            self.isLoading = false
+        }
+        
+        await loadTask?.value
+    }
+    
+    private func cancelCurrentTasks() {
+        loadTask?.cancel()
+        loadTask = nil
     }
     
     func loadBookDetails(id: Int) async {
@@ -139,6 +233,31 @@ class BooksViewModel: ObservableObject {
     }
     
     func retryLoading() async {
-        await loadBooks()
+        if isSearchActive, let parameters = currentSearchParameters {
+            loadTask = Task {
+                do {
+                    isLoading = true
+                    errorMessage = nil
+                    
+                    let response = try await apiService.searchBooks(parameters: parameters)
+                    
+                    if !Task.isCancelled {
+                        self.books = response.results
+                        self.nextPageURL = response.next
+                        self.hasNextPage = response.next != nil
+                    }
+                } catch {
+                    if !Task.isCancelled {
+                        self.errorMessage = handleError(error)
+                    }
+                }
+                
+                self.isLoading = false
+            }
+            
+            await loadTask?.value
+        } else {
+            await loadBooks()
+        }
     }
 } 

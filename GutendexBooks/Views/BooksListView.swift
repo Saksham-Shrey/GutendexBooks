@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct BooksListView: View {
     @StateObject private var viewModel = BooksViewModel()
@@ -30,8 +31,20 @@ struct BooksListView: View {
                     // Books list
                     booksList
                 }
-                .navigationTitle("Popular Books")
+                .navigationTitle(viewModel.isSearchActive ? "Search Results" : "Popular Books")
                 .navigationBarTitleDisplayMode(.large)
+                .toolbar {
+                    if viewModel.isSearchActive {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Clear") {
+                                Task {
+                                    await viewModel.clearSearch()
+                                    searchText = ""
+                                }
+                            }
+                        }
+                    }
+                }
             }
             .onAppear {
                 Task {
@@ -49,14 +62,39 @@ struct BooksListView: View {
                     .foregroundColor(.gray)
                 
                 TextField("Search books...", text: $searchText)
+                    .onChange(of: searchText) { _, newValue in
+                        // Update viewModel's searchQuery when user types
+                        viewModel.searchQuery = newValue
+                    }
                     .onSubmit {
-                        isSearching = true
+                        Task {
+                            isSearching = true
+                            await viewModel.searchBooks(query: searchText)
+                        }
+                    }
+                    .submitLabel(.search)
+                    .toolbar {
+                        ToolbarItemGroup(placement: .keyboard) {
+                            Spacer()
+                            Button("Search") {
+                                Task {
+                                    isSearching = true
+                                    await viewModel.searchBooks(query: searchText)
+                                    // Dismiss keyboard
+                                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                }
+                            }
+                            .disabled(searchText.isEmpty)
+                        }
                     }
                 
                 if !searchText.isEmpty {
                     Button(action: {
                         searchText = ""
-                        isSearching = false
+                        Task {
+                            isSearching = false
+                            await viewModel.clearSearch()
+                        }
                     }) {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.gray)
@@ -135,31 +173,88 @@ struct BooksListView: View {
                     }
                     .padding()
                     .frame(height: 400)
-                } else {
-                    LazyVStack(spacing: 16) {
-                        ForEach(viewModel.books) { book in
-                            NavigationLink(destination: BookDetailView(book: book)) {
-                                BookCard(book: book)
-                                    .background(Color(.systemBackground))
+                } else if viewModel.books.isEmpty && viewModel.isSearchActive {
+                    VStack(spacing: 20) {
+                        Spacer()
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 50))
+                            .foregroundColor(.gray)
+                        
+                        Text("No results found")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        Text("Try a different search term")
+                            .foregroundColor(.secondary)
+                        
+                        Button {
+                            Task {
+                                searchText = ""
+                                await viewModel.clearSearch()
                             }
-                            .buttonStyle(ScaleButtonStyle())
-                            .id(book.id) // Important for ScrollViewReader
-                            
-                            // Check if this is the last item
-                            if book.id == viewModel.books.last?.id && viewModel.hasNextPage {
+                        } label: {
+                            Text("Clear Search")
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white)
+                                .frame(height: 44)
+                                .frame(maxWidth: 200)
+                                .background(
+                                    LinearGradient(
+                                        colors: [Color(hex: "B39B77"), Color(hex: "8D7862")],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                                .shadow(color: Color(hex: "B39B77").opacity(0.3), radius: 5, x: 0, y: 3)
+                        }
+                        Spacer()
+                    }
+                    .padding()
+                    .frame(height: 400)
+                } else {
+                    VStack {
+                        // Show loading overlay at the top when searching
+                        if viewModel.isLoading && viewModel.isSearchActive {
+                            HStack {
                                 ProgressView()
-                                    .onAppear {
-                                        if !viewModel.isLoading {
-                                            Task {
-                                                await viewModel.loadMoreBooks()
+                                    .padding(.trailing, 8)
+                                Text("Searching...")
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity)
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(8)
+                            .padding(.horizontal)
+                            .padding(.bottom, 8)
+                        }
+                        
+                        LazyVStack(spacing: 16) {
+                            ForEach(viewModel.books) { book in
+                                NavigationLink(destination: BookDetailView(book: book)) {
+                                    BookCard(book: book)
+                                        .background(Color(.systemBackground))
+                                }
+                                .buttonStyle(ScaleButtonStyle())
+                                .id(book.id) // Important for ScrollViewReader
+                                
+                                // Check if this is the last item
+                                if book.id == viewModel.books.last?.id && viewModel.hasNextPage {
+                                    ProgressView()
+                                        .onAppear {
+                                            if !viewModel.isLoading {
+                                                Task {
+                                                    await viewModel.loadMoreBooks()
+                                                }
                                             }
                                         }
-                                    }
-                                    .padding()
+                                        .padding()
+                                }
                             }
                         }
+                        .padding(.top, 8)
                     }
-                    .padding(.top, 8)
                 }
             }
         }
@@ -185,7 +280,11 @@ struct BooksListView: View {
             }
         }
         .refreshable {
-            await viewModel.loadBooks()
+            if viewModel.isSearchActive {
+                await viewModel.searchBooks(query: searchText)
+            } else {
+                await viewModel.loadBooks()
+            }
         }
     }
 }
