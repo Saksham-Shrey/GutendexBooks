@@ -154,10 +154,4 @@ GutendexBooks respects user privacy and implements:
 - [Gutendex API](https://gutendex.com/) for providing a modern REST API to access Project Gutenberg
 - All the authors and contributors to the classic works available in the app
 
-## License
-
-[Specify your license here]
-
----
-
 *Note: This app is for educational purposes and is not affiliated with Project Gutenberg.* 
